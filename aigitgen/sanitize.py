@@ -29,12 +29,30 @@ MASK_RULES: list[tuple[str, re.Pattern[str], str]] = [
     ("aws_secret", re.compile(r"(?i)(aws_secret_access_key\s*[=:]\s*)\S+"), r"\1***MASKED***"),
     # GitHub 토큰
     ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b"), "ghp_***MASKED***"),
-    # 일반적인 KEY=VALUE 꼴 (env 파일 수정이 diff 에 들어온 경우)
+    # 일반적인 KEY=VALUE 꼴 (env 파일 수정이 diff 에 들어온 경우).
+    #
+    # 규칙을 둘로 나눈 이유 (2026-11-09 오탐으로 발견):
+    # 처음엔 값을 `[^\s"']{4,}` 로 느슨하게 잡았는데, 그러면
+    #   api_key = resolve_api_key()
+    # 같은 **평범한 코드까지 마스킹**해 버렸다. 자기 소스코드 diff 에서 3건이
+    # 오탐으로 걸렸다. 비밀값이 아닌 걸 가리면 AI 가 실제 코드를 못 보고
+    # 요약 품질이 떨어진다 — 안전한 쪽 실수라도 공짜가 아니다.
+    #
+    # 그래서 (1) 따옴표로 감싼 리터럴과 (2) 토큰 끝까지 이어지는 맨 값만 잡는다.
+    # 함수 호출은 값 뒤에 '(' 가 오므로 끝 앵커 `(?=[\s;,]|$)` 에서 걸러진다.
     (
-        "generic_secret_assignment",
+        "secret_quoted",
         re.compile(
             r"(?i)\b([A-Z0-9_]*(?:API[_-]?KEY|SECRET|PASSWORD|PASSWD|TOKEN|CREDENTIAL)[A-Z0-9_]*)"
-            r"(\s*[=:]\s*)(\"|')?([^\s\"']{4,})(\3)?"
+            r"(\s*[=:]\s*)([\"'])([^\"']{4,})\3"
+        ),
+        r"\1\2\3***MASKED***\3",
+    ),
+    (
+        "secret_bare",
+        re.compile(
+            r"(?i)\b([A-Z0-9_]*(?:API[_-]?KEY|SECRET|PASSWORD|PASSWD|TOKEN|CREDENTIAL)[A-Z0-9_]*)"
+            r"(\s*[=:]\s*)([^\s\"'()]{8,})(?=[\s;,]|$)"
         ),
         r"\1\2***MASKED***",
     ),

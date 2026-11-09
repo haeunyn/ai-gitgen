@@ -152,6 +152,11 @@ def call(system: str, user: str, cfg: CallConfig, usage: Usage) -> str:
     예외는 **구체적인 것부터** 잡는다. 하나로 뭉쳐 잡으면 "재시도하면 되는
     오류(429, 5xx, 네트워크)"와 "고쳐야 하는 오류(400, 401, 404)"를 구분할 수 없다.
     """
+    # 키 검사를 패키지 import 보다 **먼저** 한다.
+    # 그러지 않으면 패키지가 없는 환경에서 "키가 없다"는 안내가 묻혀버린다
+    # (2026-11-07 실측: ImportError 가 먼저 떠서 과제 7쪽의 출력 예시가 재현되지 않았다).
+    api_key = resolve_api_key()
+
     try:
         import anthropic
     except ImportError as exc:
@@ -159,7 +164,6 @@ def call(system: str, user: str, cfg: CallConfig, usage: Usage) -> str:
             "anthropic 패키지가 없습니다. `pip install -r requirements.txt` 를 먼저 실행하세요."
         ) from exc
 
-    api_key = resolve_api_key()
     client = anthropic.Anthropic(api_key=api_key)
     kwargs = _build_kwargs(cfg, system, user, usage)
 

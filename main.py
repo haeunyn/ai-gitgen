@@ -70,6 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     ]:
         p = sub.add_parser(name, help=help_text)
         add_common(p)
+        if name == "preview":
+            p.add_argument("--for", dest="preview_for", default="commit",
+                           choices=["commit", "pr"],
+                           help="어느 명령의 프롬프트를 볼지 (기본 commit)")
 
     return parser
 
@@ -170,6 +174,17 @@ def main(argv: list[str] | None = None) -> int:
     render.info(f"Git status 수집 완료: {len(changes.files)}개 파일 변경 감지"
                 f" ({'staged' if changes.staged else 'unstaged'})")
     render.info(f"Git diff 수집 완료: {changes.diff_line_count}줄")
+
+    # diff 가 비었는데 파일은 잡혔다면 추적되지 않은 새 파일뿐이다.
+    # git 은 untracked 파일의 내용을 diff 에 넣지 않는다. 빈 diff 를 보내면
+    # 돈만 쓰고 근거 없는 메시지가 나오므로 여기서 멈춘다.
+    if not changes.diff_text.strip():
+        render.warn(
+            "변경된 파일은 있지만 diff 가 비어 있습니다. "
+            "추적되지 않은 새 파일(untracked)뿐인 것 같습니다."
+        )
+        render.info("`git add <파일>` 로 스테이징한 뒤 다시 실행하세요. API 를 호출하지 않았습니다.")
+        return 0
     if args.command == "pr":
         render.info(f"현재 브랜치: {branch}")
 
@@ -184,7 +199,11 @@ def main(argv: list[str] | None = None) -> int:
 
     convention = _load_convention(args.convention)
 
-    if args.command == "commit":
+    # preview 는 --for 로 고른다. 이 분기를 안 두면 preview 가 항상 PR 쪽으로
+    # 떨어진다 (2026-11-09 실측: `preview` 가 commit 프롬프트를 못 보여줬다).
+    kind = args.preview_for if args.command == "preview" else args.command
+
+    if kind == "commit":
         system = prompts.COMMIT_SYSTEM
         user = prompts.commit_user(changes, diff_for_prompt, convention)
     else:
@@ -193,6 +212,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── preview: 돈을 쓰지 않고 '무엇을 보낼지' 확인
     if args.command == "preview":
+        render.info(f"미리보기 대상: {kind}")
         render.block("SYSTEM PROMPT", system)
         render.block("USER PROMPT (실제 전송 내용)", user)
         render.info("preview 는 API 를 호출하지 않았습니다. 비용 0.")
@@ -211,7 +231,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         text = _generate(
-            kind=args.command,
+            kind=kind,
             system=system,
             user=user,
             cfg=cfg,
