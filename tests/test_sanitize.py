@@ -90,3 +90,33 @@ def test_prepare_diff_off_passes_through():
     assert out == diff
     assert rep.masked_total == 0
     assert not rep.truncated
+
+
+# ── 오탐 회귀 테스트 (2026-11-09) ─────────────────────────────────────────
+# 느슨한 KEY=VALUE 규칙이 평범한 코드까지 마스킹했다. 다시 생기면 여기서 잡힌다.
+
+def test_does_not_mask_function_call():
+    for code in [
+        "api_key = resolve_api_key()",
+        "client = anthropic.Anthropic(api_key=api_key)",
+        "token = get_token()",
+    ]:
+        out, counts = sanitize.mask_secrets(code)
+        assert out == code, f"오탐: {code} → {out}"
+        assert counts == {}
+
+
+def test_does_not_mask_variable_name_tuple():
+    code = 'API_KEY_ENV_VARS = ("ANTHROPIC_API_KEY", "AI_API_KEY")'
+    out, _ = sanitize.mask_secrets(code)
+    assert out == code
+
+
+def test_still_masks_quoted_literal():
+    out, _ = sanitize.mask_secrets('ANTHROPIC_API_KEY="sk-ant-api03-REALSECRET1234"')
+    assert "REALSECRET" not in out
+
+
+def test_still_masks_bare_env_value():
+    out, _ = sanitize.mask_secrets("DB_PASSWORD=supersecret123")
+    assert "supersecret123" not in out
