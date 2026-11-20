@@ -29,8 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     def add_common(p: argparse.ArgumentParser) -> None:
         # ── API 호출 파라미터 (요구사항 2번: CLI 옵션으로 변경 가능해야 한다)
         g = p.add_argument_group("API 파라미터")
-        g.add_argument("--model", default=llm.DEFAULT_MODEL,
-                       help=f"사용할 모델 (기본 {llm.DEFAULT_MODEL})")
+        g.add_argument("--model", default=llm.default_model(),
+                       help=f"사용할 모델 (기본 {llm.default_model()})")
         g.add_argument("--max-tokens", type=int, default=llm.DEFAULT_MAX_TOKENS,
                        help=f"출력 길이 상한 (기본 {llm.DEFAULT_MAX_TOKENS})")
         g.add_argument("--effort", default=llm.DEFAULT_EFFORT,
@@ -146,11 +146,21 @@ def _usage_footer(usage: llm.Usage, model: str) -> None:
     print(f"  API 호출 횟수 : {usage.calls}회")
     print(f"  입력 토큰     : {usage.input_tokens:,}")
     print(f"  출력 토큰     : {usage.output_tokens:,}")
-    cost = usage.cost_usd(model)
-    if cost is not None:
-        print(f"  예상 비용     : ${cost:.5f} ({model})")
+    if llm.is_codyssey():
+        # 코디세이는 달러가 아니라 월 할당 토큰에서 차감한다.
+        spent = usage.codyssey_tokens(model)
+        if spent is not None:
+            mult = llm.CODYSSEY_MULTIPLIERS[model]
+            print(f"  차감 토큰     : {spent:,.0f} (배수 {mult}배, {model})")
+            print(f"  월 할당       : {llm.CODYSSEY_MONTHLY_TOKENS:,} (코디세이 공용 API)")
+        else:
+            print(f"  차감 토큰     : (모델 {model} 차감 배수 정보 없음)")
     else:
-        print(f"  예상 비용     : (모델 {model} 단가 정보 없음)")
+        cost = usage.cost_usd(model)
+        if cost is not None:
+            print(f"  예상 비용     : ${cost:.5f} ({model})")
+        else:
+            print(f"  예상 비용     : (모델 {model} 단가 정보 없음)")
     for note in usage.notes:
         render.warn(note)
 

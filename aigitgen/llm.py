@@ -37,12 +37,54 @@ import os
 from dataclasses import dataclass, field
 
 # 기본 모델. 바꾸려면 --model 을 쓴다.
-DEFAULT_MODEL = "claude-opus-5-5"
+DEFAULT_MODEL = "claude-opus-5-5"          # Anthropic 직접 호출일 때
 DEFAULT_MAX_TOKENS = 1024
 DEFAULT_EFFORT = "low"          # 커밋 메시지 요약은 깊은 추론이 필요 없다
 DEFAULT_TEMPERATURE = 0.2
 
-# 1M 토큰당 (입력 / 출력) 달러. 2026-10 기준.
+# ── 코디세이 공용 API (2026-11-20 추가) ──────────────────────────────────
+#
+# 코디세이가 교육생에게 월 500만 토큰을 무료로 준다. 엔드포인트가 **Anthropic
+# Messages API 규격과 호환**이라, anthropic SDK 를 그대로 쓸 수 있다.
+# SDK 가 ANTHROPIC_BASE_URL 환경변수를 자동으로 읽으므로 호출 코드는 손댈 게 없다.
+#
+#   export ANTHROPIC_BASE_URL="https://copa.codyssey.kr"
+#   export ANTHROPIC_API_KEY="(코디세이 API 콘솔에서 발급)"
+#
+# 다만 **모델 이름이 다르다.** Anthropic 의 claude-opus-5-5 는 여기 없다.
+# 그래서 base URL 을 보고 기본 모델을 바꾼다.
+CODYSSEY_BASE_HINT = "codyssey"
+DEFAULT_MODEL_CODYSSEY = "claude-haiku-4"   # 차감 배수 0.5배 — 가장 적게 깎인다
+
+# 코디세이는 달러가 아니라 **토큰을 차감**한다. 모델마다 배수가 다르다.
+CODYSSEY_MULTIPLIERS: dict[str, float] = {
+    "claude-haiku-4": 0.5,
+    "claude-sonnet-4": 1.0,
+}
+CODYSSEY_MONTHLY_TOKENS = 5_000_000
+
+
+def resolve_base_url() -> str | None:
+    """ANTHROPIC_BASE_URL 을 읽는다. 없으면 None (= Anthropic 직접 호출)."""
+    return os.environ.get("ANTHROPIC_BASE_URL", "").strip() or None
+
+
+def is_codyssey(base_url: str | None = None) -> bool:
+    """코디세이 공용 API 를 쓰고 있는가."""
+    if base_url is None:
+        base_url = resolve_base_url()
+    return bool(base_url) and CODYSSEY_BASE_HINT in base_url.lower()
+
+
+def default_model() -> str:
+    """지금 환경에 맞는 기본 모델.
+
+    코디세이 API 를 쓰는 중이면 거기 있는 모델을, 아니면 Anthropic 모델을 돌려준다.
+    이걸 안 하면 코디세이 환경에서 기본값 claude-opus-5-5 로 404 가 난다.
+    """
+    return DEFAULT_MODEL_CODYSSEY if is_codyssey() else DEFAULT_MODEL
+
+# 1M 토큰당 (입력 / 출력) 달러. 2026-10 기준. Anthropic 직접 호출일 때만 의미가 있다.
 MODEL_PRICING: dict[str, tuple[float, float]] = {
     "claude-opus-5-5": (4.00, 20.00),
     "claude-sonnet-5-5": (2.00, 10.00),
@@ -85,6 +127,13 @@ class Usage:
     input_tokens: int = 0
     output_tokens: int = 0
     notes: list[str] = field(default_factory=list)
+
+    def codyssey_tokens(self, model: str) -> float | None:
+        """코디세이에서 실제로 깎이는 토큰 수. 배수를 모르는 모델이면 None."""
+        mult = CODYSSEY_MULTIPLIERS.get(model)
+        if mult is None:
+            return None
+        return (self.input_tokens + self.output_tokens) * mult
 
     def cost_usd(self, model: str) -> float | None:
         price = MODEL_PRICING.get(model)
@@ -170,17 +219,38 @@ def call(system: str, user: str, cfg: CallConfig, usage: Usage) -> str:
     try:
         response = client.messages.create(**kwargs)
     except anthropic.AuthenticationError as exc:
+        # 어디서 키를 확인해야 하는지는 **어느 엔드포인트를 쓰느냐**에 따라 다르다.
+        # 코디세이를 쓰는데 console.anthropic.com 을 안내하면 엉뚱한 곳을 보게 된다.
+        where = (
+            "코디세이 플랫폼 → API 콘솔 → 내 API 키 에서 확인하세요."
+            if is_codyssey()
+            else "console.anthropic.com → API Keys 에서 키를 확인하세요."
+        )
         raise LLMError(
             "인증 실패 (401). API 키가 올바르지 않거나 만료됐습니다.\n"
-            "  console.anthropic.com → API Keys 에서 키를 확인하세요.\n"
+            f"  {where}\n"
+            f"  (현재 엔드포인트: {resolve_base_url() or 'api.anthropic.com (기본)'})\n"
             f"  원인: {exc}"
         ) from exc
     except anthropic.PermissionDeniedError as exc:
         raise LLMError(f"권한 없음 (403). 키에 이 모델 사용 권한이 없습니다.\n  원인: {exc}") from exc
     except anthropic.NotFoundError as exc:
+        hint = ""
+        if is_codyssey():
+            hint = (
+                f"\n  힌트: 코디세이 공용 API 에는 Anthropic 모델 이름이 그대로 없습니다. "
+                f"{', '.join(sorted(CODYSSEY_MULTIPLIERS))} 중에서 고르세요."
+            )
+        elif cfg.model in CODYSSEY_MULTIPLIERS:
+            hint = (
+                f"\n  힌트: '{cfg.model}' 은 코디세이 공용 API 모델입니다. "
+                'ANTHROPIC_BASE_URL="https://copa.codyssey.kr" 를 설정했는지 확인하세요.'
+            )
         raise LLMError(
             f"모델을 찾을 수 없습니다 (404): {cfg.model}\n"
             "  --model 값을 확인하세요. 사용 가능한 모델은 README 를 참고하세요.\n"
+            f"  (현재 엔드포인트: {resolve_base_url() or 'api.anthropic.com (기본)'})"
+            f"{hint}\n"
             f"  원인: {exc}"
         ) from exc
     except anthropic.BadRequestError as exc:

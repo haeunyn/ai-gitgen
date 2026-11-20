@@ -32,6 +32,35 @@ pip install -r requirements.txt
 
 **API 키는 환경변수로만 관리합니다. 코드에 적지 않습니다.**
 
+### 방법 1 — 코디세이 공용 API (권장)
+
+코디세이가 교육생에게 **월 500만 토큰**을 제공합니다. 개인 비용이 들지 않습니다.
+엔드포인트가 **Anthropic Messages API 규격과 호환**이라 코드를 고칠 필요가 없습니다.
+
+```bash
+export ANTHROPIC_BASE_URL="https://copa.codyssey.kr"
+export ANTHROPIC_API_KEY="(코디세이 플랫폼 → API 콘솔 → 키 발급)"
+
+python main.py commit        # 기본 모델이 claude-haiku-4 로 자동 전환됩니다
+```
+
+`ANTHROPIC_BASE_URL` 은 **anthropic SDK 가 알아서 읽습니다.** 이 도구는 그 값을 보고
+**기본 모델을 바꿉니다** — Anthropic 의 `claude-opus-5-5` 는 코디세이에 없기 때문입니다.
+
+| 코디세이 모델 | 차감 배수 | 비고 |
+|---|---|---|
+| **`claude-haiku-4`** | **0.5배** | 기본값. diff 요약에 충분하고 가장 적게 깎입니다 |
+| `claude-sonnet-4` | 1.0배 | 변경이 복잡할 때 |
+
+실행하면 달러 대신 **차감 토큰**을 보여줍니다.
+
+```
+  차감 토큰     : 1,272 (배수 0.5배, claude-haiku-4)
+  월 할당       : 5,000,000 (코디세이 공용 API)
+```
+
+### 방법 2 — Anthropic 직접 호출
+
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
 ```
